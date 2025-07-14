@@ -1,0 +1,386 @@
+---
+marp: true
+---
+
+# Hands-on Exercises: Applied Containerization for ML in HPC
+
+> **Exercise Overview**
+> - Each exercise builds upon previous ones
+> - Complete code and data files are assumed to be provided (e.g., in `/output/` or cloned repository)
+> - Estimated completion time: 1 hour (adjusting from 2 hours as per initial request for 1hr presentation + 1hr hands-on)
+> - Prerequisites: Basic Linux CLI, active RCC/cluster account, Apptainer module available
+
+---
+
+## Exercise 1: Basic Container Operations (15 minutes)
+
+### 1.1 Getting Started with Apptainer
+
+Ensure Apptainer is available and working on your HPC system.
+
+```bash
+# Load Apptainer module (if not already loaded)
+# Note: Your HPC system might provide Apptainer via `module load singularity` 
+# or `module load apptainer`. Use the one appropriate for your system. 
+# This workshop will use `apptainer` commands, which are generally compatible.
+module load apptainer 
+
+# Verify installation and version
+apptainer --version
+```
+
+### 1.2 Pull and Inspect ML Containers
+
+Pull standard machine learning containers from Docker Hub.
+
+```bash
+# Pull PyTorch container
+apptainer pull docker://pytorch/pytorch:latest
+
+# Pull TensorFlow container (GPU version)
+apptainer pull docker://tensorflow/tensorflow:latest-gpu
+
+# Inspect container metadata (e.g., for PyTorch)
+apptainer inspect pytorch_latest.sif
+```
+*Note: Pulling containers downloads them to your current directory as `.sif` files.*
+
+### 1.3 Interactive Shell Access
+
+Explore the container environment interactively.
+
+```bash
+# Enter the PyTorch container's interactive shell
+apptainer shell pytorch_latest.sif
+
+# Once inside the container, test Python and PyTorch
+# (The prompt might change to something like Apptainer>)
+python3 -c "import torch; print(f'PyTorch version: {torch.__version__}')"
+
+# Exit the container shell
+exit
+```
+
+---
+
+## Exercise 2: Running ML Training Jobs (20 minutes)
+
+### 2.1 PyTorch Polynomial Regression
+
+Run a simple PyTorch training script inside a container.
+
+```bash
+# Create a working directory for PyTorch training
+# It's recommended to store SIF files in a dedicated directory, e.g., in your scratch space.
+# For this exercise, we'll assume you've pulled them to a common location in your scratch space.
+# On Midway3, this would be: $SCRATCH/$USER/sif_files/ (where $SCRATCH is /scratch/midway3)
+# Adjust if you are on a different system or prefer another location.
+export SIF_DIR=${SCRATCH}/${USER}/sif_files # Recommended for Midway3
+# export SIF_DIR=${HOME}/sif_files # Alternative, if scratch is not preferred or available
+mkdir -p $SIF_DIR # Ensure this directory exists
+
+mkdir -p ~/ml_training/pytorch
+cd ~/ml_training/pytorch
+
+# Assume sample data and script are provided (e.g., from workshop repo or /output)
+# For this exercise, let's assume they are in a shared location /output/
+# If not, adjust path or copy them from the cloned workshop repository.
+# cp /path/to/workshop/data/synthetic_regression.csv .
+# cp /path/to/workshop/scripts/pytorch_benchmark.py .
+
+# For demonstration, let's assume they are in a hypothetical /output directory
+# If these files don't exist, this step will fail. Replace with actual paths.
+cp /output/synthetic_regression.csv . 
+cp /output/pytorch_benchmark.py .
+
+# For potentially faster I/O during the job, especially with larger datasets,
+# consider copying data to the compute node's local scratch ($TEMP) if available and appropriate.
+# Example for a SLURM job:
+# mkdir -p $TEMP/my_job_data
+# cp /path/to/workshop/data/synthetic_regression.csv $TEMP/my_job_data/
+# Then, inside apptainer exec, bind $TEMP/my_job_data:/data_in_container
+
+# Run training script inside the PyTorch container
+# We bind the current directory ($PWD, which is ~/ml_training/pytorch) to /work in the container.
+apptainer exec --bind $PWD:/work $SIF_DIR/pytorch_latest.sif \
+  python3 /work/pytorch_benchmark.py
+```
+
+### 2.2 TensorFlow Image Classification
+
+Run a TensorFlow training script, utilizing GPU support.
+
+```bash
+# Setup TensorFlow workspace
+# We continue to use SIF_DIR defined in the PyTorch exercise for SIF file location.
+# export SIF_DIR=${HOME}/sif_files # Ensure SIF_DIR is set if doing this exercise independently
+mkdir -p ~/ml_training/tensorflow
+cd ~/ml_training/tensorflow
+
+# Assume sample data and script are provided
+# cp /path/to/workshop/data/synthetic_images.npy .
+# cp /path/to/workshop/data/synthetic_labels.npy .
+# cp /path/to/workshop/scripts/tensorflow_benchmark.py .
+
+# For demonstration, using hypothetical /output directory
+cp /output/synthetic_images.npy .
+cp /output/synthetic_labels.npy .
+cp /output/tensorflow_benchmark.py .
+
+# Run training with GPU support (--nv flag)
+# We bind the current directory ($PWD, which is ~/ml_training/tensorflow) to /work in the container.
+apptainer exec --nv --bind $PWD:/work $SIF_DIR/tensorflow_latest-gpu.sif \
+  python3 /work/tensorflow_benchmark.py
+```
+
+An example plot that might be generated by such a script:
+
+![Training Progress Plot](https://ydcusercontenteast.blob.core.windows.net/user-content-youagent-output/ciplot202506182027110.png?se=2025-06-19T20%3A27%3A11Z&sp=r&sv=2021-12-02&sr=b&sig=bhcga%2BVwb3yiJ2vx/v2JElFf2aMEoBIu3uh6M/ewarI%3D)
+
+---
+
+## Exercise 3: SLURM Integration (15 minutes)
+
+### 3.1 Single-Node GPU Job (PyTorch)
+
+Create a SLURM script to run the PyTorch job.
+
+**Create `pytorch_job.slurm` in `~/ml_training/pytorch`:**
+```bash
+#!/bin/bash
+#SBATCH --job-name=pytorch-ml
+#SBATCH --output=pytorch-%j.out  # Standard output and error log
+#SBATCH --error=pytorch-%j.err
+#SBATCH --gres=gpu:1             # Request 1 GPU
+#SBATCH --partition=gpu          # Specify the GPU partition (check your cluster's config)
+#SBATCH --account=<your_account_name> # IMPORTANT: Replace with your account/allocation
+#SBATCH --time=00:15:00          # Time limit hrs:min:sec
+#SBATCH --cpus-per-task=4        # Request CPUs
+#SBATCH --mem=8G                 # Request Memory
+
+module load apptainer # Or 'singularity' if that's your system's module name
+
+# Define the path to your SIF files directory
+# This should be the same SIF_DIR you used when pulling images or a central one.
+# On Midway3: SIF_DIR=${SCRATCH}/${USER}/sif_files
+SIF_DIR=${SCRATCH}/${USER}/sif_files # IMPORTANT: Adjust if your SIFs are elsewhere or on a different system
+PYTORCH_SIF=$SIF_DIR/pytorch_latest.sif
+
+# Define working directory for the job
+WORK_DIR=~/ml_training/pytorch
+
+cd $WORK_DIR
+
+# Bind the working directory to /work inside the container
+# The script pytorch_benchmark.py is expected to be in $WORK_DIR
+apptainer exec --nv --bind $PWD:/work $PYTORCH_SIF \
+  python3 /work/pytorch_benchmark.py
+```
+
+**Submit the job:**
+```bash
+cd ~/ml_training/pytorch 
+sbatch pytorch_job.slurm
+
+# Check job status
+squeue -u $USER
+
+# After completion, check output: cat pytorch-<job_id>.out
+```
+*Note: You might need to copy `pytorch_latest.sif` to `~` or adjust `SIF_PATH` in the script to where you pulled the SIF file.* For example, if you pulled SIFs into `~/sif_files/`, then `SIF_PATH=~/sif_files/pytorch_latest.sif`.
+
+### 3.2 Multi-GPU TensorFlow Job (Illustrative - may require code changes)
+
+Create a SLURM script for a TensorFlow job requesting multiple GPUs. The `tensorflow_benchmark.py` script would need to be written to utilize multiple GPUs (e.g., using `tf.distribute.Strategy`).
+
+**Create `tensorflow_job.slurm` in `~/ml_training/tensorflow`:**
+```bash
+#!/bin/bash
+#SBATCH --job-name=tf-ml-multi-gpu
+#SBATCH --output=tf-multi-%j.out
+#SBATCH --error=tf-multi-%j.err
+#SBATCH --gres=gpu:2             # Request 2 GPUs
+#SBATCH --partition=gpu          # Specify the GPU partition
+#SBATCH --account=<your_account_name> # IMPORTANT: Replace with your account/allocation
+#SBATCH --time=00:15:00
+#SBATCH --cpus-per-task=8
+#SBATCH --mem=16G
+
+module load apptainer # Or 'singularity'
+
+# Define the path to your SIF files directory
+# On Midway3: SIF_DIR=${SCRATCH}/${USER}/sif_files
+SIF_DIR=${SCRATCH}/${USER}/sif_files # IMPORTANT: Adjust if your SIFs are elsewhere or on a different system
+TENSORFLOW_SIF=$SIF_DIR/tensorflow_latest-gpu.sif
+
+# Define working directory for the job
+WORK_DIR=~/ml_training/tensorflow
+
+cd $WORK_DIR
+
+# The python script must be designed to use multiple GPUs.
+# This command just makes them available to the container.
+# Bind the working directory to /work inside the container.
+apptainer exec --nv --bind $PWD:/work $TENSORFLOW_SIF \
+  python3 /work/tensorflow_benchmark.py --num_gpus=2 # Assuming script takes such an arg
+```
+
+**Submit and monitor:**
+```bash
+cd ~/ml_training/tensorflow
+sbatch tensorflow_job.slurm
+squeue -u $USER
+```
+*Note: Similar to the PyTorch job, ensure `SIF_PATH` correctly points to your `tensorflow_latest-gpu.sif` file.*
+
+---
+
+## Exercise 4: Troubleshooting Scenarios (5 minutes - Demonstration/Quick Checks)
+
+### 4.1 GPU Access Issues
+
+Verify GPU visibility and CUDA availability inside the container.
+
+```bash
+# Assuming pytorch_latest.sif is in the current directory or provide full path
+# Check if NVIDIA drivers/tools are accessible
+apptainer exec --nv pytorch_latest.sif nvidia-smi
+
+# Check if PyTorch can see the CUDA-enabled GPU
+apptainer exec --nv pytorch_latest.sif python3 -c \
+  "import torch; print(f'CUDA available: {torch.cuda.is_available()}, GPU count: {torch.cuda.device_count()}')"
+```
+
+### 4.2 File System Binding
+
+Test mounting host directories into the container.
+
+```bash
+# Create a test data directory and a file on the host
+mkdir -p ~/my_test_data
+echo "Hello from host" > ~/my_test_data/test.txt
+
+# Test binding this directory to /data inside the container
+apptainer exec --bind ~/my_test_data:/data pytorch_latest.sif \
+  ls -l /data
+
+apptainer exec --bind ~/my_test_data:/data pytorch_latest.sif \
+  cat /data/test.txt
+
+# Clean up
+rm -rf ~/my_test_data
+```
+
+### 4.3 Environment Variables
+
+Pass and access environment variables within the container.
+
+```bash
+# Set an environment variable on the host
+export MY_CUSTOM_VAR="HelloContainerWorld"
+
+# Apptainer typically passes host environment variables by default.
+# Check if it's accessible (ensure SIF_DIR is set and pytorch_latest.sif is in $SIF_DIR):
+apptainer exec $SIF_DIR/pytorch_latest.sif \
+  python3 -c "import os; print(f'MY_CUSTOM_VAR from container: {os.environ.get(\"MY_CUSTOM_VAR\")}')"
+
+# To explicitly pass or override variables, use --env or --env-file
+# For a cleaner environment, you can use --cleanenv to prevent inheriting host environment.
+apptainer exec --cleanenv --env MY_OTHER_VAR="ExplicitlySetInCleanEnv" $SIF_DIR/pytorch_latest.sif \
+  sh -c 'echo "MY_OTHER_VAR is: $MY_OTHER_VAR; HOST_VAR is: $MY_CUSTOM_VAR"' # MY_CUSTOM_VAR should be empty now
+
+apptainer exec --env MY_OTHER_VAR="ExplicitlySet" $SIF_DIR/pytorch_latest.sif \
+  sh -c 'echo "MY_OTHER_VAR is: $MY_OTHER_VAR"'
+```
+
+---
+
+## Exercise 5: Best Practices Implementation (5 minutes - Demonstration/Quick Checks)
+
+### 5.1 Container Cache Management
+
+Manage Apptainer's cache, especially on systems with limited home directory space.
+
+```bash
+# Check default cache location (usually ~/.apptainer/cache)
+# Set cache directory to a scratch space. This is highly recommended.
+# On Midway3: export APPTAINER_CACHEDIR=$SCRATCH/$USER/apptainer_cache
+# On compute nodes, $TEMP (e.g. /scratch/local/$USER) can also be a good option for job-specific caching.
+export APPTAINER_CACHEDIR=${SCRATCH}/${USER}/apptainer_cache # Recommended for Midway3
+# export APPTAINER_CACHEDIR=${TEMP}/apptainer_cache # Alternative for job-specific cache on compute node
+mkdir -p $APPTAINER_CACHEDIR
+
+# List cached images
+apptainer cache list
+
+# Clean cache (removes unused/old items, or use 'all' for everything)
+# apptainer cache clean --all # Be cautious with this command
+apptainer cache clean
+```
+
+### 5.2 Resource Monitoring (Conceptual)
+
+While a containerized job is running (e.g., via SLURM), you can monitor resource usage on the node.
+
+**Create `monitor.sh` (run this on the compute node if you have interactive access, or adapt for SLURM output):**
+```bash
+#!/bin/bash
+# This script is for interactive monitoring on a compute node.
+# For SLURM jobs, you'd typically rely on SLURM accounting and job output.
+
+JOB_ID_TO_MONITOR=$1 # Pass SLURM job ID if trying to find processes
+
+echo "Monitoring resources... Press Ctrl+C to stop."
+while true; do
+  echo "---- $(date) ----"
+  echo "GPU Status:"
+  nvidia-smi
+  echo "\nCPU/Memory (Top Processes):"
+  top -bn1 | head -n 20 # Shows top processes, containerized ones might be among them
+  # To find specific container processes, you might need to grep for 'apptainer' or the user
+  echo "-------------------------"
+  sleep 10
+done
+```
+
+**Running monitoring (example for an interactive session):**
+```bash
+# Terminal 1 (on the compute node where your job is running)
+# ./monitor.sh
+
+# Terminal 2 (or in your SLURM script)
+# apptainer exec --nv pytorch_latest.sif python3 pytorch_benchmark.py
+```
+*For SLURM, it's more common to check `nvidia-smi` output in your job's log file, and use `sacct` or `sstat` for post-job or live CPU/memory stats.*
+
+---
+
+## Additional Resources and Next Steps
+
+### GitHub Repository
+
+Access complete workshop materials, including scripts and sample data:
+```bash
+# If not already cloned
+# git clone https://github.com/rcc-uchicago/hpc-ml-containers-workshop
+# cd hpc-ml-containers-workshop
+```
+*(Ensure paths in exercises are updated if you clone the repo and use files from it.)*
+
+### Advanced Topics for Further Exploration
+
+- Building custom Apptainer containers (`.def` files).
+- Multi-node distributed training with MPI and containers.
+- Integrating containers with different ML frameworks (e.g., JAX).
+- Advanced performance optimization and profiling techniques for containerized applications.
+
+---
+
+> **Key Takeaways from Hands-on Exercises**
+> - You can now pull and run standard ML containers using Apptainer.
+> - You are able to execute training scripts within these containers, including GPU utilization.
+> - You have submitted containerized ML jobs to SLURM.
+> - You have practiced basic troubleshooting for GPU access, file binding, and environment variables.
+> - You are aware of best practices like cache management and resource monitoring concepts.
+
+This concludes the hands-on exercises. Well done!
