@@ -41,14 +41,14 @@
 
 ## Part A: Core 60-Minute Lab
 
-| Time | Exercise | Goal |
-|------|----------|------|
-| 05 m | 0. Environment Sanity Check | Verify Apptainer, quota, GPU |
-| 10 m | 1. Basic Apptainer Usage   | Pull / inspect / shell |
-| 10 m | 2. File Binding Patterns   | Host ↔ container data flow |
-| 15 m | 3. Interactive ML Training | PyTorch & TensorFlow, CPU+GPU |
-| 15 m | 4. Batch (SLURM) Workflow  | Containerized jobs on the scheduler |
-| 05 m | 5. Troubleshooting & Best Practices | Quick cheat-sheet |
+| Exercise | Goal |
+|----------|------|
+| 0. Environment Sanity Check | Verify Apptainer, quota, GPU |
+| 1. Basic Apptainer Usage   | Pull / inspect / shell |
+| 2. File Binding Patterns   | Host ↔ container data flow |
+| 3. Interactive ML Training | PyTorch & TensorFlow, CPU+GPU |
+| 4. Batch (SLURM) Workflow  | Containerized jobs on the scheduler |
+| 5. Troubleshooting & Best Practices | Quick cheat-sheet |
 
 ---
 
